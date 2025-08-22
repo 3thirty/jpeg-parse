@@ -21,7 +21,7 @@ func Open(filename string) (JpegFile, error) {
 
 func (jpeg JpegFile) HasSOI() bool {
 	// SOI is first two bytes: 0xFF, 0xD8
-	pos, err := jpeg.findMarker(0xD8, 0)
+	pos, err := jpeg.findMarker(0xD8, 0, true)
 
 	if err != nil {
 		fmt.Println("Error seeking to SOI marker:", err)
@@ -43,7 +43,7 @@ func (jpeg JpegFile) HasEOI() bool {
 
 	fileSize := info.Size()
 
-	pos, err := jpeg.findMarker(0xD9, fileSize-2)
+	pos, err := jpeg.findMarker(0xD9, fileSize-2, true)
 
 	if err != nil {
 		fmt.Println("Error seeking to EOI marker:", err)
@@ -61,7 +61,7 @@ func (jpeg JpegFile) GetAppData() []int64 {
 
 	// App data markers are 0xFF 0xE0 to 0xFF 0xEF
 	for _, marker := range markers {
-		pos, err := jpeg.findMarker(marker, offset)
+		pos, err := jpeg.findMarker(marker, offset, true)
 
 		// if we hit EOF or other errors, that's fine, just move on to th next marker
 		if err != nil {
@@ -94,7 +94,7 @@ func (jpeg JpegFile) GetHeight() int64 {
 		return int64(-1)
 	}
 
-	return int64(buf[0])<<8 | int64(buf[1])
+	return bytesToInt64(buf)
 }
 
 func (jpeg JpegFile) GetWidth() int64 {
@@ -113,14 +113,14 @@ func (jpeg JpegFile) GetWidth() int64 {
 		return int64(-1)
 	}
 
-	return int64(buf[0])<<8 | int64(buf[1])
+	return bytesToInt64(buf)
 }
 
 func (jpeg JpegFile) getSOFOffset() (int64, error) {
-	return jpeg.findMarker(0xC0, int64(2))
+	return jpeg.findMarker(0xC0, int64(2), false)
 }
 
-func (jpeg JpegFile) findMarker(marker byte, offset int64) (int64, error) {
+func (jpeg JpegFile) findMarker(marker byte, offset int64, trustOffset bool) (int64, error) {
 	var err error
 	var pos int64
 
@@ -143,5 +143,18 @@ func (jpeg JpegFile) findMarker(marker byte, offset int64) (int64, error) {
 			}
 			return pos - 2, nil // Return position of the marker
 		}
+
+		// if we are trusting the offset, we can stop if we hit a different marker
+		// 0xFF and 0xBB seem to not be markers, so ignore them. TODO: confirm this
+		if trustOffset && buf[0] == 0xFF && buf[1] != marker && buf[1] != 0xFF && buf[1] != 0xBB {
+			return -1, fmt.Errorf("Found unexpected marker %x %x", buf[0], buf[1])
+		}
 	}
+}
+
+func bytesToInt64(b []byte) int64 {
+	if len(b) < 2 {
+		return -1
+	}
+	return int64(b[0])<<8 | int64(b[1])
 }
