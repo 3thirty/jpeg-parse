@@ -41,3 +41,28 @@ func TestGetEOI(t *testing.T) {
 		}
 	}
 }
+
+func TestGetAppData(t *testing.T) {
+	tests := []struct {
+		file          string
+		expectedCount int
+	}{
+		{"../../test/data/minneapolis.jpg", 3},
+		{"../../test/data/bad.jpg", 0},
+	}
+
+	for _, test := range tests {
+		jpeg, err := Open(test.file)
+
+		if err != nil {
+			t.Errorf("Error opening file %s: %v", test.file, err)
+			return
+		}
+
+		appData := jpeg.GetAppData()
+
+		if len(appData) != test.expectedCount {
+			t.Errorf("Did not find expected number of app data file=%s expected=%d found=%d", test.file, test.expectedCount, len(appData))
+		}
+	}
+}

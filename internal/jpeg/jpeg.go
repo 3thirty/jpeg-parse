@@ -28,7 +28,7 @@ func (jpeg JpegFile) HasSOI() bool {
 		return false
 	}
 
-	return pos == 1
+	return pos == 0
 }
 
 func (jpeg JpegFile) HasEOI() bool {
@@ -50,7 +50,32 @@ func (jpeg JpegFile) HasEOI() bool {
 		return false
 	}
 
-	return pos == fileSize-1
+	return pos == fileSize-2
+}
+
+func (jpeg JpegFile) GetAppData() []int64 {
+	var ret []int64
+	var offset = int64(2) // because SOI marker is fixed length, we can just start searching from offset 2
+
+	markers := []byte{0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF}
+
+	// App data markers are 0xFF 0xE0 to 0xFF 0xEF
+	for _, marker := range markers {
+		pos, err := jpeg.findMarker(marker, offset)
+
+		// if we hit EOF or other errors, that's fine, just move on to th next marker
+		if err != nil {
+			continue
+		}
+
+		fmt.Printf("Found marker 0x%X at position %d\n", marker, pos)
+
+		ret = append(ret, pos)
+
+		offset = pos + 2
+	}
+
+	return ret
 }
 
 func (jpeg JpegFile) findMarker(marker byte, offset int64) (int64, error) {
@@ -74,7 +99,7 @@ func (jpeg JpegFile) findMarker(marker byte, offset int64) (int64, error) {
 			if err != nil {
 				return -1, err
 			}
-			return pos - 1, nil // Return position of the marker
+			return pos - 2, nil // Return position of the marker
 		}
 	}
 }

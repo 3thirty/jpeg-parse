@@ -50,6 +50,8 @@ func main() {
 	} else {
 		fmt.Println("JPEG file does not have EOI marker")
 	}
+
+	fmt.Printf("JPEG app offsets %d", jpeg.GetAppData())
 }
 
 // get commandline args, ensure they are valid
