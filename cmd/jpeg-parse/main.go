@@ -4,24 +4,51 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+
+	"3thirty.net/jpeg/internal/jpeg"
 )
 
 var getFileName = func(filename string) (string, error) {
-	res, err := os.Stat(filename)
+	_, err := os.Stat(filename)
 
 	if err != nil {
 		return "", err
 	}
 
-	return res.Name(), nil
+	absPath, err := filepath.Abs(filename)
+	if err != nil {
+		return "", err
+	}
+
+	return absPath, nil
 }
 
 func main() {
-	_, error := parseArgs(os.Args)
+	filename, err := parseArgs(os.Args)
 
-	if error != nil {
-		fmt.Println("Error:", error)
+	if err != nil {
+		fmt.Println("Error:", err)
 		return
+	}
+
+	jpeg, err := jpeg.Open(filename)
+
+	if err != nil {
+		fmt.Println("Error opening JPEG file:", err)
+		return
+	}
+
+	if jpeg.HasSOI() {
+		fmt.Println("JPEG file has SOI marker")
+	} else {
+		fmt.Println("JPEG file does not have SOI marker")
+	}
+
+	if jpeg.HasEOI() {
+		fmt.Println("JPEG file has EOI marker")
+	} else {
+		fmt.Println("JPEG file does not have EOI marker")
 	}
 }
 
