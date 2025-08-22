@@ -40,18 +40,20 @@ func main() {
 	}
 
 	if jpeg.HasSOI() {
-		fmt.Println("JPEG file has SOI marker")
+		fmt.Println("✅ JPEG file has SOI marker")
 	} else {
-		fmt.Println("JPEG file does not have SOI marker")
+		fmt.Println("❌ JPEG file does not have SOI marker")
 	}
 
 	if jpeg.HasEOI() {
-		fmt.Println("JPEG file has EOI marker")
+		fmt.Println("✅ JPEG file has EOI marker")
 	} else {
-		fmt.Println("JPEG file does not have EOI marker")
+		fmt.Println("❌ JPEG file does not have EOI marker")
 	}
 
-	fmt.Printf("JPEG app offsets %d", jpeg.GetAppData())
+	fmt.Printf("App Data offsets: %d\n", jpeg.GetAppData())
+
+	fmt.Printf("Dimensions: %d ˣ %d\n", jpeg.GetWidth(), jpeg.GetHeight())
 }
 
 // get commandline args, ensure they are valid

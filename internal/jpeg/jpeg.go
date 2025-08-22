@@ -43,7 +43,7 @@ func (jpeg JpegFile) HasEOI() bool {
 
 	fileSize := info.Size()
 
-	pos, err := jpeg.findMarker(0xD9, 2)
+	pos, err := jpeg.findMarker(0xD9, fileSize-2)
 
 	if err != nil {
 		fmt.Println("Error seeking to EOI marker:", err)
@@ -68,7 +68,7 @@ func (jpeg JpegFile) GetAppData() []int64 {
 			continue
 		}
 
-		fmt.Printf("Found marker 0x%X at position %d\n", marker, pos)
+		//fmt.Printf("Found marker 0x%X at position %d\n", marker, pos)
 
 		ret = append(ret, pos)
 
@@ -76,6 +76,48 @@ func (jpeg JpegFile) GetAppData() []int64 {
 	}
 
 	return ret
+}
+
+func (jpeg JpegFile) GetHeight() int64 {
+	offset, err := jpeg.getSOFOffset()
+
+	if err != nil {
+		return int64(-1)
+	}
+
+	var buf = make([]byte, 2)
+
+	// height is stored in bytes 5 and 6 of the SOF segment
+	jpeg.Seek(offset+5, 0)
+
+	if _, err = jpeg.Read(buf); err != nil {
+		return int64(-1)
+	}
+
+	return int64(buf[0])<<8 | int64(buf[1])
+}
+
+func (jpeg JpegFile) GetWidth() int64 {
+	offset, err := jpeg.getSOFOffset()
+
+	if err != nil {
+		return int64(-1)
+	}
+
+	var buf = make([]byte, 2)
+
+	// width is stored in bytes 7 and 8 of the SOF segment
+	jpeg.Seek(offset+7, 0)
+
+	if _, err = jpeg.Read(buf); err != nil {
+		return int64(-1)
+	}
+
+	return int64(buf[0])<<8 | int64(buf[1])
+}
+
+func (jpeg JpegFile) getSOFOffset() (int64, error) {
+	return jpeg.findMarker(0xC0, int64(2))
 }
 
 func (jpeg JpegFile) findMarker(marker byte, offset int64) (int64, error) {

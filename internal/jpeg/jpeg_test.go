@@ -66,3 +66,53 @@ func TestGetAppData(t *testing.T) {
 		}
 	}
 }
+
+func TestGetHeight(t *testing.T) {
+	tests := []struct {
+		file     string
+		expected int64
+	}{
+		{"../../test/data/minneapolis.jpg", 600},
+		{"../../test/data/bad.jpg", -1},
+	}
+
+	for _, test := range tests {
+		jpeg, err := Open(test.file)
+
+		if err != nil {
+			t.Errorf("Error opening file %s: %v", test.file, err)
+			return
+		}
+
+		height := jpeg.GetHeight()
+
+		if height != test.expected {
+			t.Errorf("Height mismatch match file=%s expected=%d found=%d", test.file, test.expected, height)
+		}
+	}
+}
+
+func TestGetWidth(t *testing.T) {
+	tests := []struct {
+		file     string
+		expected int64
+	}{
+		{"../../test/data/minneapolis.jpg", 800},
+		{"../../test/data/bad.jpg", -1},
+	}
+
+	for _, test := range tests {
+		jpeg, err := Open(test.file)
+
+		if err != nil {
+			t.Errorf("Error opening file %s: %v", test.file, err)
+			return
+		}
+
+		width := jpeg.GetWidth()
+
+		if width != test.expected {
+			t.Errorf("Width mismatch match file=%s expected=%d found=%d", test.file, test.expected, width)
+		}
+	}
+}
