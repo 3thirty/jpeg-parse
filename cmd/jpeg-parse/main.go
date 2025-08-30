@@ -51,7 +51,7 @@ func main() {
 		fmt.Println("❌ JPEG file does not have EOI marker")
 	}
 
-	fmt.Printf("App Data offsets: %d\n", jpeg.GetAppData())
+	fmt.Printf("App Data offsets: %+v\n", jpeg.GetAppData())
 
 	fmt.Printf("Dimensions: %d ˣ %d\n", jpeg.GetWidth(), jpeg.GetHeight())
 }

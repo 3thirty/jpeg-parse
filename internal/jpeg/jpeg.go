@@ -9,6 +9,12 @@ type JpegFile struct {
 	*os.File
 }
 
+type AppData struct {
+	offset int64
+	name   string
+	length int64
+}
+
 func Open(filename string) (JpegFile, error) {
 	fh, err := os.Open(filename)
 
@@ -53,24 +59,56 @@ func (jpeg JpegFile) HasEOI() bool {
 	return pos == fileSize-2
 }
 
-func (jpeg JpegFile) GetAppData() []int64 {
-	var ret []int64
+func (jpeg JpegFile) GetAppData() []AppData {
+	var ret []AppData
 	var offset = int64(2) // because SOI marker is fixed length, we can just start searching from offset 2
 
 	markers := []byte{0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF}
 
 	// App data markers are 0xFF 0xE0 to 0xFF 0xEF
+	var readBuf = make([]byte, 2)
 	for _, marker := range markers {
 		pos, err := jpeg.findMarker(marker, offset, true)
 
-		// if we hit EOF or other errors, that's fine, just move on to th next marker
+		// if we hit EOF or other errors, that's fine, just move on to the next marker
 		if err != nil {
 			continue
 		}
 
-		//fmt.Printf("Found marker 0x%X at position %d\n", marker, pos)
+		// read the length
+		jpeg.Seek(pos+2, 0)
 
-		ret = append(ret, pos)
+		_, err = jpeg.Read(readBuf)
+
+		if err != nil {
+			break
+		}
+
+		length := bytesToInt64(readBuf)
+
+		// read the name field
+		var name string
+		for {
+			if _, err = jpeg.Read(readBuf); err != nil {
+				break
+			}
+
+			// if we hit a null byte, we're done
+			if readBuf[0] == 0x00 {
+				break
+			}
+
+			// if the last byte is null, we want to include the first byte only
+			if readBuf[1] == 0x00 {
+				name += string(readBuf[0])
+				break
+			}
+
+			// otherwise we want both bytes
+			name += string(readBuf)
+		}
+
+		ret = append(ret, AppData{int64(pos), name, length})
 
 		offset = pos + 2
 	}
@@ -117,7 +155,20 @@ func (jpeg JpegFile) GetWidth() int64 {
 }
 
 func (jpeg JpegFile) getSOFOffset() (int64, error) {
-	return jpeg.findMarker(0xC0, int64(2), false)
+	markers := []byte{0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCC, 0xCF}
+
+	for _, marker := range markers {
+		pos, err := jpeg.findMarker(marker, int64(2), false)
+
+		// if we hit EOF or other errors, that's fine, just move on to the next marker
+		if err != nil {
+			continue
+		}
+
+		return pos, nil
+	}
+
+	return -1, fmt.Errorf("No SOF marker found")
 }
 
 func (jpeg JpegFile) findMarker(marker byte, offset int64, trustOffset bool) (int64, error) {
