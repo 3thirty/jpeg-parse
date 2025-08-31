@@ -5,257 +5,210 @@ import (
 	"os"
 )
 
-// File represents a JPEG file on disk and provides methods to interact with it
+// File represents a JPEG file on disk.
 type File struct {
 	*os.File
 	fields map[Marker]Field
 }
 
-// Field represents a segment or field within the JPEG file
+// Field represents a segment or marker field within the JPEG file.
 type Field struct {
 	Offset int64
 	Name   string
 	Length int64
 }
 
-// Open opens a JPEG file and returns a File struct
-func Open(filename string) (File, error) {
+// Open opens a JPEG file and returns a File.
+func Open(filename string) (*File, error) {
 	fh, err := os.Open(filename)
-
 	if err != nil {
-		return File{}, err
+		return nil, err
 	}
-
-	return File{fh, make(map[Marker]Field)}, nil
+	return &File{File: fh, fields: make(map[Marker]Field)}, nil
 }
 
-// HasSOI checks if the JPEG file has a valid Start of Image (SOI) marker
-func (jpeg File) HasSOI() bool {
-	_, err := jpeg.GetFieldByMarker(SOI)
-
-	if err != nil {
-		fmt.Println(err)
-	}
-
+// HasSOI reports whether the file contains a Start of Image marker.
+func (f *File) HasSOI() bool {
+	_, err := f.Field(SOI)
 	return err == nil
 }
 
-// HasEOI checks if the JPEG file has a valid End of Image (EOI) marker
-func (jpeg File) HasEOI() bool {
-	_, err := jpeg.GetFieldByMarker(EOI)
-
+// HasEOI reports whether the file contains an End of Image marker.
+func (f *File) HasEOI() bool {
+	_, err := f.Field(EOI)
 	return err == nil
 }
 
-// extractFieldByMarker returns a Field struct for a given JPEG marker
-func (jpeg File) extractFieldByMarker(marker Marker) (Field, error) {
-	pos, err := jpeg.findMarker(marker.Byte())
-
+// field extracts a Field for a given marker.
+func (f *File) field(marker Marker) (Field, error) {
+	pos, err := f.findMarker(marker.Byte())
 	if err != nil {
 		return Field{}, err
 	}
-
 	if pos == -1 {
-		return Field{}, fmt.Errorf("could not find marker %X: %s", marker.Byte(), marker.String())
+		return Field{}, fmt.Errorf("marker not found %X: %s", marker.Byte(), marker.String())
 	}
 
-	var length = int64(0)
-
+	var length int64
 	if marker.HasLength() {
-		length = jpeg.getSegmentLength(pos + 2)
-
+		length = f.segmentLength(pos + 2)
 		if length == -1 {
-			return Field{}, fmt.Errorf("could not find length for marker %X: %s", marker.Byte(), marker.String())
+			return Field{}, fmt.Errorf("no length for marker %X: %s", marker.Byte(), marker.String())
 		}
 	} else {
-		// fields with no legnth field are 2 bytes
+		// fields with no length field are 2 bytes
 		length = 2
 	}
 
 	return Field{pos, marker.String(), length}, nil
 }
 
-// GetFieldByMarker returns a Field struct for a given JPEG marker, either from cache or by extracting it
-func (jpeg File) GetFieldByMarker(marker Marker) (Field, error) {
-	field, ok := jpeg.fields[marker]
-
-	if ok {
+// Field returns a Field for the given marker, from cache if available.
+func (f *File) Field(marker Marker) (Field, error) {
+	if field, ok := f.fields[marker]; ok {
 		return field, nil
 	}
 
-	var ret Field
-	var err error
+	var (
+		ret Field
+		err error
+	)
 	if marker == SOF {
-		// SOF is a special case since there are multiple possible markers
-		ret, err = jpeg.getSOF()
+		ret, err = f.sof()
 	} else {
-		// extract standard fields
-		ret, err = jpeg.extractFieldByMarker(marker)
+		ret, err = f.field(marker)
 	}
 
 	if err == nil {
-		// cache the field data
-		jpeg.fields[marker] = ret
+		f.fields[marker] = ret
 	}
-
 	return ret, err
-
 }
 
-// getEOIOffset returns the offset of the EOI marker
-func (jpeg File) getEOI() (Field, error) {
-	return jpeg.GetFieldByMarker(EOI)
+// eoi returns the End of Image marker field.
+func (f *File) eoi() (Field, error) {
+	return f.Field(EOI)
 }
 
-// GetAppData returns a slice of Fields representing the APPn segments in the JPEG file
-func (jpeg File) GetAppData() []Field {
+// AppData returns the APPn segments in the file.
+func (f *File) AppData() []Field {
 	var ret []Field
-
 	for i := 0; i < 16; i++ {
-		field, err := jpeg.extractFieldByMarker(Marker(0xE0 + byte(i)))
-
+		field, err := f.field(Marker(0xE0 + byte(i)))
 		if err != nil {
 			continue
 		}
-
 		ret = append(ret, field)
 	}
-
 	return ret
 }
 
-// GetHeight returns the height of the JPEG image in pixels, or -1 if it cannot be determined
-func (jpeg File) GetHeight() int64 {
-	field, err := jpeg.GetFieldByMarker(SOF)
-
+// Height reports the image height in pixels.
+func (f *File) Height() (int64, error) {
+	field, err := f.Field(SOF)
 	if err != nil {
-		return int64(-1)
-	}
-
-	var buf = make([]byte, 2)
-
-	// height is stored in bytes 5 and 6 of the SOF segment
-	jpeg.Seek(field.Offset+5, 0)
-
-	if _, err = jpeg.Read(buf); err != nil {
-		return int64(-1)
-	}
-
-	return bytesToInt64(buf)
-}
-
-// GetWidth returns the width of the JPEG image in pixels, or -1 if it cannot be determined
-func (jpeg File) GetWidth() int64 {
-	field, err := jpeg.GetFieldByMarker(SOF)
-
-	if err != nil {
-		return int64(-1)
-	}
-
-	var buf = make([]byte, 2)
-
-	// width is stored in bytes 7 and 8 of the SOF segment
-	jpeg.Seek(field.Offset+7, 0)
-
-	if _, err = jpeg.Read(buf); err != nil {
-		return int64(-1)
-	}
-
-	return bytesToInt64(buf)
-}
-
-// GetSOS returns the Start of Scan (SOS) Field in the JPEG file
-func (jpeg File) GetSOS() (Field, error) {
-	return jpeg.GetFieldByMarker(SOS)
-}
-
-// HasSOF checks if the JPEG file has a Start of Frame (SOF) marker
-func (jpeg File) HasSOF() bool {
-	sof, err := jpeg.getSOF()
-
-	return sof.Offset != -1 && sof.Length != -1 && err == nil
-}
-
-// GetDQT returns the Define Quantization Table (DQT) Field in the JPEG file
-func (jpeg File) GetDQT() (Field, error) {
-	return jpeg.GetFieldByMarker(DQT)
-}
-
-// getSOFOffset returns the offset of the Start of Frame (SOF) marker
-// The SOF marker may be anything between C0 and CF, we will just look for the first
-func (jpeg File) getSOF() (Field, error) {
-	for i := 0; i < 16; i++ {
-		pos, err := jpeg.findMarker(0xC0 + byte(i))
-
-		if err == nil {
-			length := jpeg.getSegmentLength(pos + 2)
-
-			return Field{pos, SOF.String(), length}, nil
-		}
-	}
-
-	return Field{}, fmt.Errorf("could not find SOF marker")
-}
-
-// findMarker searches for a specific JPEG marker
-func (jpeg File) findMarker(marker byte) (int64, error) {
-	var err error
-
-	// Start scanning from the beginning of the file
-	if _, err := jpeg.Seek(0, 0); err != nil {
 		return -1, err
 	}
 
-	// read 1kb at a time for now
-	buf := make([]byte, 1024)
+	buf := make([]byte, 2)
+	if _, err = f.Seek(field.Offset+5, 0); err != nil {
+		return -1, err
+	}
+	if _, err = f.Read(buf); err != nil {
+		return -1, err
+	}
+	return bytesToInt64(buf), nil
+}
 
-	// Read until we find the marker or reach EOF
-	foundMarkerStart := false
+// Width reports the image width in pixels.
+func (f *File) Width() (int64, error) {
+	field, err := f.Field(SOF)
+	if err != nil {
+		return -1, err
+	}
+
+	buf := make([]byte, 2)
+	if _, err = f.Seek(field.Offset+7, 0); err != nil {
+		return -1, err
+	}
+	if _, err = f.Read(buf); err != nil {
+		return -1, err
+	}
+	return bytesToInt64(buf), nil
+}
+
+// SOS returns the Start of Scan field.
+func (f *File) SOS() (Field, error) {
+	return f.Field(SOS)
+}
+
+// HasSOF reports whether the file has a Start of Frame marker.
+func (f *File) HasSOF() bool {
+	sof, err := f.sof()
+	return sof.Offset != -1 && sof.Length != -1 && err == nil
+}
+
+// DQT returns the Define Quantization Table field.
+func (f *File) DQT() (Field, error) {
+	return f.Field(DQT)
+}
+
+// sof returns the first Start of Frame field (C0–CF).
+func (f *File) sof() (Field, error) {
+	for i := 0; i < 16; i++ {
+		pos, err := f.findMarker(0xC0 + byte(i))
+		if err == nil {
+			length := f.segmentLength(pos + 2)
+			return Field{pos, SOF.String(), length}, nil
+		}
+	}
+	return Field{}, fmt.Errorf("SOF marker not found")
+}
+
+// findMarker searches for the given marker byte.
+func (f *File) findMarker(marker byte) (int64, error) {
+	if _, err := f.Seek(0, 0); err != nil {
+		return -1, err
+	}
+
+	buf := make([]byte, 1024)
+	foundFF := false
+
 	for {
-		if _, err = jpeg.Read(buf); err != nil {
+		n, err := f.Read(buf)
+		if err != nil {
 			return -1, err
 		}
-
-		for i := 0; i < len(buf); i++ {
+		for i := 0; i < n; i++ {
 			if buf[i] == 0xFF {
-				foundMarkerStart = true
+				foundFF = true
 				continue
 			}
-
-			if foundMarkerStart && buf[i] == marker {
-				pos, err := jpeg.Seek(0, 1)
-
+			if foundFF && buf[i] == marker {
+				pos, err := f.Seek(0, 1)
 				if err != nil {
 					return -1, err
 				}
-
-				// position of the marker is calculated by:
-				// current read position (end of buffer) - 1 (for the 0xFF byte) - length of buffer - current index
-				return pos - 1 - int64(len(buf)-i), nil
+				return pos - 1 - int64(n-i), nil
 			}
-
-			foundMarkerStart = false
+			foundFF = false
 		}
 	}
 }
 
-// getSegmentLength reads the length of a JPEG segment from the file at the given offset
-// this is blindly assumed to be the two bytes after the given offset
-func (jpeg File) getSegmentLength(offset int64) int64 {
-	var readBuf = make([]byte, 2)
-
-	jpeg.Seek(offset, 0)
-
-	_, err := jpeg.Read(readBuf)
-
-	if err != nil {
+// segmentLength reads a segment length from the given offset.
+func (f *File) segmentLength(offset int64) int64 {
+	buf := make([]byte, 2)
+	if _, err := f.Seek(offset, 0); err != nil {
 		return -1
 	}
-
-	return bytesToInt64(readBuf)
+	if _, err := f.Read(buf); err != nil {
+		return -1
+	}
+	return bytesToInt64(buf)
 }
 
-// bytesToInt64 converts a 2-byte slice to an int64
+// bytesToInt64 converts two bytes to int64.
 func bytesToInt64(b []byte) int64 {
 	if len(b) < 2 {
 		return -1
@@ -263,55 +216,41 @@ func bytesToInt64(b []byte) int64 {
 	return int64(b[0])<<8 | int64(b[1])
 }
 
-// ParseAppData reads the data from an APPn Field in the JPEG file and returns it as a map of strings
-// for now, we only extract the identifier string
-func ParseAppData(field Field, jpeg File) map[string]string {
+// ParseAppData extracts identifier strings from an APPn field.
+func ParseAppData(field Field, f *File) map[string]string {
 	ret := make(map[string]string)
 	buf := make([]byte, field.Length)
 
-	jpeg.Seek(field.Offset, 0)
-	jpeg.Read(buf)
+	_, _ = f.Seek(field.Offset, 0)
+	_, _ = f.Read(buf)
 
-	// parse
 	length := bytesToInt64(buf[2:4])
-
-	// extract the identifier
 	for i := int64(4); i < length; i++ {
-		if (buf[i]) == 0x00 {
+		if buf[i] == 0x00 {
 			ret["identifier"] = string(buf[4:i])
 			break
 		}
 	}
-
 	return ret
 }
 
-// GetCompressedImageData returns the compressed image data between the SOS and EOI markers
-func GetCompressedImageData(jpeg File) []byte {
-	sos, err := jpeg.GetSOS()
-
+// CompressedData returns the compressed image data between SOS and EOI.
+func CompressedData(f *File) []byte {
+	sos, err := f.SOS()
 	if err != nil {
 		return nil
 	}
 
-	// we identify the start of the compressed image data by finding the SOS marker (0xFF 0xDA)
-	// skipping and skipping the length of that field
-	jpeg.Seek(sos.Offset+sos.Length, 0)
-
-	// we will read until we hit the EOI marker (0xFF 0xD9)
-	// note that this does not support progressive jpegs
-	eoi, err := jpeg.getEOI()
-
+	_, _ = f.Seek(sos.Offset+sos.Length, 0)
+	eoi, err := f.eoi()
 	if err != nil {
 		return nil
 	}
 
-	var buf = make([]byte, eoi.Offset-(sos.Offset-1000))
-
-	jpeg.Seek(sos.Offset+sos.Length, 0)
-	if _, err = jpeg.Read(buf); err != nil {
+	buf := make([]byte, eoi.Offset-(sos.Offset-1000))
+	_, _ = f.Seek(sos.Offset+sos.Length, 0)
+	if _, err = f.Read(buf); err != nil {
 		return nil
 	}
-
 	return buf
 }

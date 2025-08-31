@@ -61,7 +61,7 @@ func TestGetAppData(t *testing.T) {
 			return
 		}
 
-		appData := jpeg.GetAppData()
+		appData := jpeg.AppData()
 
 		if len(appData) != test.expectedCount {
 			t.Errorf("Did not find expected number of app data file=%s expected=%d found=%d", test.file, test.expectedCount, len(appData))
@@ -87,7 +87,12 @@ func TestGetHeight(t *testing.T) {
 			return
 		}
 
-		height := jpeg.GetHeight()
+		height, err := jpeg.Height()
+
+		if test.expected != -1 && err != nil {
+			t.Errorf("Error getting height: %v", err)
+			return
+		}
 
 		if height != test.expected {
 			t.Errorf("Height mismatch match file=%s expected=%d found=%d", test.file, test.expected, height)
@@ -113,7 +118,12 @@ func TestGetWidth(t *testing.T) {
 			return
 		}
 
-		width := jpeg.GetWidth()
+		width, err := jpeg.Width()
+
+		if test.expected != -1 && err != nil {
+			t.Errorf("Error getting width: %v", err)
+			return
+		}
 
 		if width != test.expected {
 			t.Errorf("Width mismatch match file=%s expected=%d found=%d", test.file, test.expected, width)

@@ -52,19 +52,33 @@ func main() {
 	}
 
 	fmt.Println("App Data:")
-	for _, appData := range jpegFile.GetAppData() {
+	for _, appData := range jpegFile.AppData() {
 		data := jpeg.ParseAppData(appData, jpegFile)
 		fmt.Printf("\t%-5s %s (%d bytes)\n", appData.Name, data["identifier"], appData.Length)
 	}
 
-	fmt.Printf("Dimensions: %d ˣ %d\n", jpegFile.GetWidth(), jpegFile.GetHeight())
+	width, err := jpegFile.Width()
+	if err != nil {
+		fmt.Println("❌ Failed to get width")
+		return
+	}
+
+	height, err := jpegFile.Height()
+	if err != nil {
+		fmt.Println("❌ Failed to get height")
+		return
+	}
+
+	if width > 0 && height > 0 {
+		fmt.Printf("✅ Dimensions: %d ˣ %d\n", width, height)
+	}
 
 	fmt.Println("")
 
 	fmt.Printf("Fields: %+v\n", jpegFile)
 
-	imageData := jpeg.GetCompressedImageData(jpegFile)
-	fmt.Printf("\nCompressed Image Data Length: %d bytes\n", len(imageData))
+	imageData := jpeg.CompressedData(jpegFile)
+	fmt.Printf("\nCompressed Data Length: %d bytes\n", len(imageData))
 }
 
 // get commandline args, ensure they are valid
