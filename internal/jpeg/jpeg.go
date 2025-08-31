@@ -9,7 +9,7 @@ type JpegFile struct {
 	*os.File
 }
 
-type AppData struct {
+type Field struct {
 	offset int64
 	name   string
 	length int64
@@ -38,9 +38,6 @@ func (jpeg JpegFile) HasSOI() bool {
 }
 
 func (jpeg JpegFile) HasEOI() bool {
-	// EOI is 0xFF, 0xD9
-	// for now, let's naively assume that it's the last 2 bytes of the file
-
 	info, err := jpeg.Stat()
 
 	if err != nil {
@@ -49,18 +46,34 @@ func (jpeg JpegFile) HasEOI() bool {
 
 	fileSize := info.Size()
 
+	eoi, err := jpeg.getEOIOffset()
+
+	return eoi.offset == fileSize-2
+}
+
+func (jpeg JpegFile) getEOIOffset() (Field, error) {
+	// EOI is 0xFF, 0xD9
+	// for now, let's naively assume that it's the last 2 bytes of the file
+
+	info, err := jpeg.Stat()
+
+	if err != nil {
+		return Field{}, err
+	}
+
+	fileSize := info.Size()
+
 	pos, err := jpeg.findMarker(0xD9, fileSize-2, true)
 
 	if err != nil {
-		fmt.Println("Error seeking to EOI marker:", err)
-		return false
+		return Field{}, err
 	}
 
-	return pos == fileSize-2
+	return Field{pos, "End of Image", 2}, nil
 }
 
-func (jpeg JpegFile) GetAppData() []AppData {
-	var ret []AppData
+func (jpeg JpegFile) GetAppData() []Field {
+	var ret []Field
 	var offset = int64(2) // because SOI marker is fixed length, we can just start searching from offset 2
 
 	markers := []byte{0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF}
@@ -75,16 +88,8 @@ func (jpeg JpegFile) GetAppData() []AppData {
 			continue
 		}
 
-		// read the length
-		jpeg.Seek(pos+2, 0)
-
-		_, err = jpeg.Read(readBuf)
-
-		if err != nil {
-			break
-		}
-
-		length := bytesToInt64(readBuf)
+		// read the length, this will also move the file pointer forward by 4 bytes
+		length := jpeg.getSegmentLength(pos + 2)
 
 		// read the name field
 		var name string
@@ -108,7 +113,7 @@ func (jpeg JpegFile) GetAppData() []AppData {
 			name += string(readBuf)
 		}
 
-		ret = append(ret, AppData{int64(pos), name, length})
+		ret = append(ret, Field{int64(pos), name, length})
 
 		offset = pos + 2
 	}
@@ -154,6 +159,63 @@ func (jpeg JpegFile) GetWidth() int64 {
 	return bytesToInt64(buf)
 }
 
+func (jpeg JpegFile) GetSOS() (Field, error) {
+	// SOS marker is 0xFF 0xDA
+	pos, err := jpeg.findMarker(0xDA, int64(3), false) // TODO: 3 is not the right offset; but example image must have an earlier field with an odd number of bytes
+
+	if err != nil {
+		fmt.Println("Error seeking to SOS marker:", err)
+		return Field{}, err
+	}
+
+	return Field{pos, "Start of Scan", jpeg.getSegmentLength(pos + 2)}, nil
+}
+
+func (jpeg JpegFile) GetCompressedImageData() []byte {
+	sos, err := jpeg.GetSOS()
+
+	if err != nil {
+		return nil
+	}
+
+	// we identify the start of the compressed image data by finding the SOS marker (0xFF 0xDA)
+	// skipping and skipping the length of that field
+	jpeg.Seek(sos.offset+sos.length, 0)
+
+	// we will read until we hit the EOI marker (0xFF 0xD9)
+	// note that this does not support progressive jpegs
+	eoi, err := jpeg.getEOIOffset()
+
+	if err != nil {
+		return nil
+	}
+
+	var buf = make([]byte, eoi.offset-(sos.offset-1000))
+
+	jpeg.Seek(sos.offset+sos.length, 0)
+	if _, err = jpeg.Read(buf); err != nil {
+		return nil
+	}
+
+	return buf
+}
+
+func (jpeg JpegFile) HasSOF() bool {
+	return jpeg.getSOFOffset() != -1
+}
+
+func (jpeg JpegFile) GetDQT() []Field {
+	pos, err := jpeg.findMarker(0xDB, int64(2), false)
+
+	if err != nil {
+		return nil
+	}
+
+	len = jpeg.getSegmentLength(pos + 2)
+
+	return []Field{{pos, "Define Quantization Table", len}}
+}
+
 func (jpeg JpegFile) getSOFOffset() (int64, error) {
 	markers := []byte{0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCC, 0xCF}
 
@@ -165,6 +227,7 @@ func (jpeg JpegFile) getSOFOffset() (int64, error) {
 			continue
 		}
 
+		// just return the first SOF marker we find
 		return pos, nil
 	}
 
@@ -201,6 +264,21 @@ func (jpeg JpegFile) findMarker(marker byte, offset int64, trustOffset bool) (in
 			return -1, fmt.Errorf("Found unexpected marker %x %x", buf[0], buf[1])
 		}
 	}
+}
+
+func (jpeg JpegFile) getSegmentLength(offset int64) int64 {
+	// read the subsequent two bytes to get the length of the segment
+	var readBuf = make([]byte, 2)
+
+	jpeg.Seek(offset, 0)
+
+	_, err := jpeg.Read(readBuf)
+
+	if err != nil {
+		return -1
+	}
+
+	return bytesToInt64(readBuf)
 }
 
 func bytesToInt64(b []byte) int64 {

@@ -54,6 +54,17 @@ func main() {
 	fmt.Printf("App Data offsets: %+v\n", jpeg.GetAppData())
 
 	fmt.Printf("Dimensions: %d ˣ %d\n", jpeg.GetWidth(), jpeg.GetHeight())
+
+	imageData := jpeg.GetCompressedImageData()
+	fmt.Printf("Compressed Image Data Length: %d bytes\n", len(imageData))
+}
+
+func dumpCompressedImageData(jpeg jpeg.JpegFile) {
+	data := jpeg.GetCompressedImageData()
+
+	fmt.Printf("Compressed Image Data Length: %d bytes\n", len(data))
+
+	os.Stdout.Write(data)
 }
 
 // get commandline args, ensure they are valid
