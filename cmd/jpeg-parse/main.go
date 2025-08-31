@@ -32,51 +32,51 @@ func main() {
 		return
 	}
 
-	jpeg, err := jpeg.Open(filename)
+	jpegFile, err := jpeg.Open(filename)
 
 	if err != nil {
 		fmt.Println("Error opening JPEG file:", err)
 		return
 	}
 
-	if jpeg.HasSOI() {
+	if jpegFile.HasSOI() {
 		fmt.Println("✅ JPEG file has SOI marker")
 	} else {
 		fmt.Println("❌ JPEG file does not have SOI marker")
 	}
 
-	if jpeg.HasEOI() {
+	if jpegFile.HasEOI() {
 		fmt.Println("✅ JPEG file has EOI marker")
 	} else {
 		fmt.Println("❌ JPEG file does not have EOI marker")
 	}
 
-	fmt.Printf("App Data offsets: %+v\n", jpeg.GetAppData())
+	fmt.Println("App Data:")
+	for _, appData := range jpegFile.GetAppData() {
+		data := jpeg.ParseAppData(appData, jpegFile)
+		fmt.Printf("\t%-5s %s (%d bytes)\n", appData.Name, data["identifier"], appData.Length)
+	}
 
-	fmt.Printf("Dimensions: %d ˣ %d\n", jpeg.GetWidth(), jpeg.GetHeight())
+	fmt.Printf("Dimensions: %d ˣ %d\n", jpegFile.GetWidth(), jpegFile.GetHeight())
 
-	imageData := jpeg.GetCompressedImageData()
-	fmt.Printf("Compressed Image Data Length: %d bytes\n", len(imageData))
-}
+	fmt.Println("")
 
-func dumpCompressedImageData(jpeg jpeg.JpegFile) {
-	data := jpeg.GetCompressedImageData()
+	fmt.Printf("Fields: %+v\n", jpegFile)
 
-	fmt.Printf("Compressed Image Data Length: %d bytes\n", len(data))
-
-	os.Stdout.Write(data)
+	imageData := jpeg.GetCompressedImageData(jpegFile)
+	fmt.Printf("\nCompressed Image Data Length: %d bytes\n", len(imageData))
 }
 
 // get commandline args, ensure they are valid
 func parseArgs(argv []string) (string, error) {
 	if len(argv) < 2 {
-		return "", errors.New("No arguments provided")
+		return "", errors.New("no arguments provided")
 	}
 
 	filename, err := getFileName(argv[1])
 
 	if err != nil {
-		return "", fmt.Errorf("Error accessing file: %v", err)
+		return "", fmt.Errorf("error accessing file: %v", err)
 	}
 
 	return filename, nil

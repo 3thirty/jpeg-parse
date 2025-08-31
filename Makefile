@@ -4,6 +4,7 @@ build:
 	go build -o ./bin/jpeg-parse ./cmd/jpeg-parse
 
 test:
+	staticcheck ./cmd/jpeg-parse ./internal/jpeg
 	go test ./cmd/jpeg-parse ./internal/jpeg
 
 run:

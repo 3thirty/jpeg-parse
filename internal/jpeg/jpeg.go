@@ -5,124 +5,128 @@ import (
 	"os"
 )
 
-type JpegFile struct {
+// File represents a JPEG file on disk and provides methods to interact with it
+type File struct {
 	*os.File
+	fields map[Marker]Field
 }
 
+// Field represents a segment or field within the JPEG file
 type Field struct {
-	offset int64
-	name   string
-	length int64
+	Offset int64
+	Name   string
+	Length int64
 }
 
-func Open(filename string) (JpegFile, error) {
+// Open opens a JPEG file and returns a File struct
+func Open(filename string) (File, error) {
 	fh, err := os.Open(filename)
 
 	if err != nil {
-		return JpegFile{}, err
+		return File{}, err
 	}
 
-	return JpegFile{fh}, nil
+	return File{fh, make(map[Marker]Field)}, nil
 }
 
-func (jpeg JpegFile) HasSOI() bool {
-	// SOI is first two bytes: 0xFF, 0xD8
-	pos, err := jpeg.findMarker(0xD8, 0, true)
+// HasSOI checks if the JPEG file has a valid Start of Image (SOI) marker
+func (jpeg File) HasSOI() bool {
+	_, err := jpeg.GetFieldByMarker(SOI)
 
 	if err != nil {
-		fmt.Println("Error seeking to SOI marker:", err)
-		return false
+		fmt.Println(err)
 	}
 
-	return pos == 0
+	return err == nil
 }
 
-func (jpeg JpegFile) HasEOI() bool {
-	info, err := jpeg.Stat()
+// HasEOI checks if the JPEG file has a valid End of Image (EOI) marker
+func (jpeg File) HasEOI() bool {
+	_, err := jpeg.GetFieldByMarker(EOI)
 
-	if err != nil {
-		return false
-	}
-
-	fileSize := info.Size()
-
-	eoi, err := jpeg.getEOIOffset()
-
-	return eoi.offset == fileSize-2
+	return err == nil
 }
 
-func (jpeg JpegFile) getEOIOffset() (Field, error) {
-	// EOI is 0xFF, 0xD9
-	// for now, let's naively assume that it's the last 2 bytes of the file
-
-	info, err := jpeg.Stat()
+// extractFieldByMarker returns a Field struct for a given JPEG marker
+func (jpeg File) extractFieldByMarker(marker Marker) (Field, error) {
+	pos, err := jpeg.findMarker(marker.Byte())
 
 	if err != nil {
 		return Field{}, err
 	}
 
-	fileSize := info.Size()
-
-	pos, err := jpeg.findMarker(0xD9, fileSize-2, true)
-
-	if err != nil {
-		return Field{}, err
+	if pos == -1 {
+		return Field{}, fmt.Errorf("could not find marker %X: %s", marker.Byte(), marker.String())
 	}
 
-	return Field{pos, "End of Image", 2}, nil
+	var length = int64(0)
+
+	if marker.HasLength() {
+		length = jpeg.getSegmentLength(pos + 2)
+
+		if length == -1 {
+			return Field{}, fmt.Errorf("could not find length for marker %X: %s", marker.Byte(), marker.String())
+		}
+	} else {
+		// fields with no legnth field are 2 bytes
+		length = 2
+	}
+
+	return Field{pos, marker.String(), length}, nil
 }
 
-func (jpeg JpegFile) GetAppData() []Field {
+// GetFieldByMarker returns a Field struct for a given JPEG marker, either from cache or by extracting it
+func (jpeg File) GetFieldByMarker(marker Marker) (Field, error) {
+	field, ok := jpeg.fields[marker]
+
+	if ok {
+		return field, nil
+	}
+
+	var ret Field
+	var err error
+	if marker == SOF {
+		// SOF is a special case since there are multiple possible markers
+		ret, err = jpeg.getSOF()
+	} else {
+		// extract standard fields
+		ret, err = jpeg.extractFieldByMarker(marker)
+	}
+
+	if err == nil {
+		// cache the field data
+		jpeg.fields[marker] = ret
+	}
+
+	return ret, err
+
+}
+
+// getEOIOffset returns the offset of the EOI marker
+func (jpeg File) getEOI() (Field, error) {
+	return jpeg.GetFieldByMarker(EOI)
+}
+
+// GetAppData returns a slice of Fields representing the APPn segments in the JPEG file
+func (jpeg File) GetAppData() []Field {
 	var ret []Field
-	var offset = int64(2) // because SOI marker is fixed length, we can just start searching from offset 2
 
-	markers := []byte{0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF}
+	for i := 0; i < 16; i++ {
+		field, err := jpeg.extractFieldByMarker(Marker(0xE0 + byte(i)))
 
-	// App data markers are 0xFF 0xE0 to 0xFF 0xEF
-	var readBuf = make([]byte, 2)
-	for _, marker := range markers {
-		pos, err := jpeg.findMarker(marker, offset, true)
-
-		// if we hit EOF or other errors, that's fine, just move on to the next marker
 		if err != nil {
 			continue
 		}
 
-		// read the length, this will also move the file pointer forward by 4 bytes
-		length := jpeg.getSegmentLength(pos + 2)
-
-		// read the name field
-		var name string
-		for {
-			if _, err = jpeg.Read(readBuf); err != nil {
-				break
-			}
-
-			// if we hit a null byte, we're done
-			if readBuf[0] == 0x00 {
-				break
-			}
-
-			// if the last byte is null, we want to include the first byte only
-			if readBuf[1] == 0x00 {
-				name += string(readBuf[0])
-				break
-			}
-
-			// otherwise we want both bytes
-			name += string(readBuf)
-		}
-
-		ret = append(ret, Field{int64(pos), name, length})
-
-		offset = pos + 2
+		ret = append(ret, field)
 	}
 
 	return ret
 }
 
-func (jpeg JpegFile) GetHeight() int64 {
-	offset, err := jpeg.getSOFOffset()
+// GetHeight returns the height of the JPEG image in pixels, or -1 if it cannot be determined
+func (jpeg File) GetHeight() int64 {
+	field, err := jpeg.GetFieldByMarker(SOF)
 
 	if err != nil {
 		return int64(-1)
@@ -131,7 +135,7 @@ func (jpeg JpegFile) GetHeight() int64 {
 	var buf = make([]byte, 2)
 
 	// height is stored in bytes 5 and 6 of the SOF segment
-	jpeg.Seek(offset+5, 0)
+	jpeg.Seek(field.Offset+5, 0)
 
 	if _, err = jpeg.Read(buf); err != nil {
 		return int64(-1)
@@ -140,8 +144,9 @@ func (jpeg JpegFile) GetHeight() int64 {
 	return bytesToInt64(buf)
 }
 
-func (jpeg JpegFile) GetWidth() int64 {
-	offset, err := jpeg.getSOFOffset()
+// GetWidth returns the width of the JPEG image in pixels, or -1 if it cannot be determined
+func (jpeg File) GetWidth() int64 {
+	field, err := jpeg.GetFieldByMarker(SOF)
 
 	if err != nil {
 		return int64(-1)
@@ -150,7 +155,7 @@ func (jpeg JpegFile) GetWidth() int64 {
 	var buf = make([]byte, 2)
 
 	// width is stored in bytes 7 and 8 of the SOF segment
-	jpeg.Seek(offset+7, 0)
+	jpeg.Seek(field.Offset+7, 0)
 
 	if _, err = jpeg.Read(buf); err != nil {
 		return int64(-1)
@@ -159,121 +164,84 @@ func (jpeg JpegFile) GetWidth() int64 {
 	return bytesToInt64(buf)
 }
 
-func (jpeg JpegFile) GetSOS() (Field, error) {
-	// SOS marker is 0xFF 0xDA
-	pos, err := jpeg.findMarker(0xDA, int64(3), false) // TODO: 3 is not the right offset; but example image must have an earlier field with an odd number of bytes
-
-	if err != nil {
-		fmt.Println("Error seeking to SOS marker:", err)
-		return Field{}, err
-	}
-
-	return Field{pos, "Start of Scan", jpeg.getSegmentLength(pos + 2)}, nil
+// GetSOS returns the Start of Scan (SOS) Field in the JPEG file
+func (jpeg File) GetSOS() (Field, error) {
+	return jpeg.GetFieldByMarker(SOS)
 }
 
-func (jpeg JpegFile) GetCompressedImageData() []byte {
-	sos, err := jpeg.GetSOS()
+// HasSOF checks if the JPEG file has a Start of Frame (SOF) marker
+func (jpeg File) HasSOF() bool {
+	sof, err := jpeg.getSOF()
 
-	if err != nil {
-		return nil
-	}
-
-	// we identify the start of the compressed image data by finding the SOS marker (0xFF 0xDA)
-	// skipping and skipping the length of that field
-	jpeg.Seek(sos.offset+sos.length, 0)
-
-	// we will read until we hit the EOI marker (0xFF 0xD9)
-	// note that this does not support progressive jpegs
-	eoi, err := jpeg.getEOIOffset()
-
-	if err != nil {
-		return nil
-	}
-
-	var buf = make([]byte, eoi.offset-(sos.offset-1000))
-
-	jpeg.Seek(sos.offset+sos.length, 0)
-	if _, err = jpeg.Read(buf); err != nil {
-		return nil
-	}
-
-	return buf
+	return sof.Offset != -1 && sof.Length != -1 && err == nil
 }
 
-func (jpeg JpegFile) HasSOF() bool {
-	pos, err := jpeg.getSOFOffset()
-
-	if err != nil {
-		return false
-	}
-
-	return pos != -1
+// GetDQT returns the Define Quantization Table (DQT) Field in the JPEG file
+func (jpeg File) GetDQT() (Field, error) {
+	return jpeg.GetFieldByMarker(DQT)
 }
 
-func (jpeg JpegFile) GetDQT() []Field {
-	pos, err := jpeg.findMarker(0xDB, int64(2), false)
+// getSOFOffset returns the offset of the Start of Frame (SOF) marker
+// The SOF marker may be anything between C0 and CF, we will just look for the first
+func (jpeg File) getSOF() (Field, error) {
+	for i := 0; i < 16; i++ {
+		pos, err := jpeg.findMarker(0xC0 + byte(i))
 
-	if err != nil {
-		return nil
-	}
+		if err == nil {
+			length := jpeg.getSegmentLength(pos + 2)
 
-	length := jpeg.getSegmentLength(pos + 2)
-
-	return []Field{{pos, "Define Quantization Table", length}}
-}
-
-func (jpeg JpegFile) getSOFOffset() (int64, error) {
-	markers := []byte{0xC0, 0xC1, 0xC2, 0xC3, 0xC4, 0xC5, 0xC6, 0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC, 0xCD, 0xCC, 0xCF}
-
-	for _, marker := range markers {
-		pos, err := jpeg.findMarker(marker, int64(2), false)
-
-		// if we hit EOF or other errors, that's fine, just move on to the next marker
-		if err != nil {
-			continue
+			return Field{pos, SOF.String(), length}, nil
 		}
-
-		// just return the first SOF marker we find
-		return pos, nil
 	}
 
-	return -1, fmt.Errorf("No SOF marker found")
+	return Field{}, fmt.Errorf("could not find SOF marker")
 }
 
-func (jpeg JpegFile) findMarker(marker byte, offset int64, trustOffset bool) (int64, error) {
+// findMarker searches for a specific JPEG marker
+func (jpeg File) findMarker(marker byte) (int64, error) {
 	var err error
-	var pos int64
 
-	// Move to the specified offset
-	if _, err = jpeg.Seek(offset, 0); err != nil {
+	// Start scanning from the beginning of the file
+	if _, err := jpeg.Seek(0, 0); err != nil {
 		return -1, err
 	}
 
+	// read 1kb at a time for now
+	buf := make([]byte, 1024)
+
 	// Read until we find the marker or reach EOF
+	foundMarkerStart := false
 	for {
-		buf := make([]byte, 2)
 		if _, err = jpeg.Read(buf); err != nil {
 			return -1, err
 		}
 
-		if buf[0] == 0xFF && buf[1] == marker {
-			pos, err = jpeg.Seek(0, 1) // Get current position
-			if err != nil {
-				return -1, err
+		for i := 0; i < len(buf); i++ {
+			if buf[i] == 0xFF {
+				foundMarkerStart = true
+				continue
 			}
-			return pos - 2, nil // Return position of the marker
-		}
 
-		// if we are trusting the offset, we can stop if we hit a different marker
-		// 0xFF and 0xBB seem to not be markers, so ignore them. TODO: confirm this
-		if trustOffset && buf[0] == 0xFF && buf[1] != marker && buf[1] != 0xFF && buf[1] != 0xBB {
-			return -1, fmt.Errorf("Found unexpected marker %x %x", buf[0], buf[1])
+			if foundMarkerStart && buf[i] == marker {
+				pos, err := jpeg.Seek(0, 1)
+
+				if err != nil {
+					return -1, err
+				}
+
+				// position of the marker is calculated by:
+				// current read position (end of buffer) - 1 (for the 0xFF byte) - length of buffer - current index
+				return pos - 1 - int64(len(buf)-i), nil
+			}
+
+			foundMarkerStart = false
 		}
 	}
 }
 
-func (jpeg JpegFile) getSegmentLength(offset int64) int64 {
-	// read the subsequent two bytes to get the length of the segment
+// getSegmentLength reads the length of a JPEG segment from the file at the given offset
+// this is blindly assumed to be the two bytes after the given offset
+func (jpeg File) getSegmentLength(offset int64) int64 {
 	var readBuf = make([]byte, 2)
 
 	jpeg.Seek(offset, 0)
@@ -287,9 +255,63 @@ func (jpeg JpegFile) getSegmentLength(offset int64) int64 {
 	return bytesToInt64(readBuf)
 }
 
+// bytesToInt64 converts a 2-byte slice to an int64
 func bytesToInt64(b []byte) int64 {
 	if len(b) < 2 {
 		return -1
 	}
 	return int64(b[0])<<8 | int64(b[1])
+}
+
+// ParseAppData reads the data from an APPn Field in the JPEG file and returns it as a map of strings
+// for now, we only extract the identifier string
+func ParseAppData(field Field, jpeg File) map[string]string {
+	ret := make(map[string]string)
+	buf := make([]byte, field.Length)
+
+	jpeg.Seek(field.Offset, 0)
+	jpeg.Read(buf)
+
+	// parse
+	length := bytesToInt64(buf[2:4])
+
+	// extract the identifier
+	for i := int64(4); i < length; i++ {
+		if (buf[i]) == 0x00 {
+			ret["identifier"] = string(buf[4:i])
+			break
+		}
+	}
+
+	return ret
+}
+
+// GetCompressedImageData returns the compressed image data between the SOS and EOI markers
+func GetCompressedImageData(jpeg File) []byte {
+	sos, err := jpeg.GetSOS()
+
+	if err != nil {
+		return nil
+	}
+
+	// we identify the start of the compressed image data by finding the SOS marker (0xFF 0xDA)
+	// skipping and skipping the length of that field
+	jpeg.Seek(sos.Offset+sos.Length, 0)
+
+	// we will read until we hit the EOI marker (0xFF 0xD9)
+	// note that this does not support progressive jpegs
+	eoi, err := jpeg.getEOI()
+
+	if err != nil {
+		return nil
+	}
+
+	var buf = make([]byte, eoi.Offset-(sos.Offset-1000))
+
+	jpeg.Seek(sos.Offset+sos.Length, 0)
+	if _, err = jpeg.Read(buf); err != nil {
+		return nil
+	}
+
+	return buf
 }

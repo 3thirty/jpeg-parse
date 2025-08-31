@@ -9,6 +9,7 @@ var testFiles = []struct {
 	valid bool
 }{
 	{"../../test/data/minneapolis.jpg", true},
+	{"../../test/data/oakland.jpg", true},
 	{"../../test/data/bad.jpg", false},
 }
 
@@ -48,6 +49,7 @@ func TestGetAppData(t *testing.T) {
 		expectedCount int
 	}{
 		{"../../test/data/minneapolis.jpg", 3},
+		{"../../test/data/oakland.jpg", 2},
 		{"../../test/data/bad.jpg", 0},
 	}
 
@@ -73,6 +75,7 @@ func TestGetHeight(t *testing.T) {
 		expected int64
 	}{
 		{"../../test/data/minneapolis.jpg", 600},
+		{"../../test/data/oakland.jpg", 640},
 		{"../../test/data/bad.jpg", -1},
 	}
 
@@ -98,6 +101,7 @@ func TestGetWidth(t *testing.T) {
 		expected int64
 	}{
 		{"../../test/data/minneapolis.jpg", 800},
+		{"../../test/data/oakland.jpg", 640},
 		{"../../test/data/bad.jpg", -1},
 	}
 
