@@ -201,7 +201,13 @@ func (jpeg JpegFile) GetCompressedImageData() []byte {
 }
 
 func (jpeg JpegFile) HasSOF() bool {
-	return jpeg.getSOFOffset() != -1
+	pos, err := jpeg.getSOFOffset()
+
+	if err != nil {
+		return false
+	}
+
+	return pos != -1
 }
 
 func (jpeg JpegFile) GetDQT() []Field {
@@ -211,9 +217,9 @@ func (jpeg JpegFile) GetDQT() []Field {
 		return nil
 	}
 
-	len = jpeg.getSegmentLength(pos + 2)
+	length := jpeg.getSegmentLength(pos + 2)
 
-	return []Field{{pos, "Define Quantization Table", len}}
+	return []Field{{pos, "Define Quantization Table", length}}
 }
 
 func (jpeg JpegFile) getSOFOffset() (int64, error) {
